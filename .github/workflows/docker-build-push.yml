@@ -1,88 +1,78 @@
-# 工作流名称
-name: Docker Build and Push
+# .github/workflows/docker-publish.yml
+# 作用: 当你在 GitHub 上发布一个新的 Release 时，自动构建并推送多架构 Docker 镜像到 Docker Hub。
 
-# 触发工作流的事件
+name: Docker Publish
+
 on:
-  push:
-    # 仅在推送到 main 分支时触发
-    branches: [ "main" ]
-    # 仅在推送 "v" 开头的标签时触发 (例如 v1.0.0)
-    tags: [ 'v*.*.*' ]
+  # 当一个 Release 被 "published" 时触发
+  release:
+    types: [published]
+  
   # 允许手动从 Actions 页面触发此工作流
   workflow_dispatch:
 
 jobs:
-  build-and-push:
+  build-and-push-image:
     # 使用最新的 Ubuntu 运行环境
     runs-on: ubuntu-latest
 
-    # 授予工作流写入 GitHub Packages (GHCR) 的权限
+    # 授予工作流读取仓库内容和写入 GitHub Packages 的权限
     permissions:
       contents: read
       packages: write
 
     steps:
-      # 1. 检出代码
+      # 1. 检出你的仓库代码
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 设置 QEMU 以支持多平台构建
-      # 这是在 x86 架构的 runner 上构建 arm64 镜像的关键
+      # 2. 设置 QEMU，以支持在 x86 Runner 上构建 ARM 镜像
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # 3. 设置 Docker Buildx 构建器
+      # 3. 设置 Docker Buildx，这是 Docker 的多平台构建工具
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 4. 登录到容器仓库 (选择一个即可)
-      # 选项 A: 登录到 Docker Hub
+      # 4. 登录到 Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      
-      # 选项 B: 登录到 GitHub Container Registry (GHCR)
-      # - name: Log in to GitHub Container Registry
-      #   uses: docker/login-action@v3
-      #   with:
-      #     registry: ghcr.io
-      #     username: ${{ github.repository_owner }}
-      #     password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 5. 提取元数据 (如标签和注释)
-      # 这一步会自动生成合适的 Docker 镜像标签
+      # 5. 提取 Docker 镜像的元数据 (标签和注释)
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            # 镜像名称格式: <你的用户名>/<你的镜像名>
-            # 如果使用 Docker Hub
-            xhy1640/emby-toolkit
-            # 如果使用 GHCR
-            # ghcr.io/${{ github.repository_owner }}/emby-toolkit
+          # 修改为你的 Docker Hub 镜像名称
+          images: xhy1640/emby-toolkit
           
-          # 自动生成标签的规则
+          # 定义标签生成规则，以保留历史版本
           tags: |
-            type=schedule
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            # 当推送到 main 分支时，自动打上 'latest' 标签
-            type=raw,value=latest,enable={{is_default_branch}}
+            # "latest" 标签，永远指向最新的 Release
+            type=raw,value=latest,enable=true
 
-      # 6. 构建并推送 Docker 镜像
+            # 基于 Git 标签的完整版本号, e.g., v1.2.3
+            type=semver,pattern={{version}}
+
+            # 基于 Git 标签的次版本号, e.g., v1.2
+            type=semver,pattern={{major}}.{{minor}}
+
+            # 基于 Git Commit SHA 的唯一标签, e.g., sha-a1b2c3d (终极不可变标签)
+            type=sha,prefix=sha-
+
+      # 6. 构建并推送多架构 Docker 镜像
       - name: Build and push Docker image
+        id: build-and-push
         uses: docker/build-push-action@v5
         with:
-          # 构建上下文为当前目录
+          # 构建上下文为当前目录 (项目根目录)
           context: .
-          # 推送镜像到仓库 (仅在非 PR 事件时)
-          push: ${{ github.event_name != 'pull_request' }}
-          # 指定目标平台，这里是关键！
+          # 推送镜像到仓库
+          push: true
+          # 关键: 指定要构建的目标平台
           platforms: linux/amd64,linux/arm64
           # 使用上一步生成的标签
           tags: ${{ steps.meta.outputs.tags }}
